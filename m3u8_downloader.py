@@ -11,6 +11,9 @@ class PartInfo():
     
     def __repr__(self):
         return f'url: {self.url}, duration: {self.duration}, range: {self.range}, index: {self.index}'
+    
+    def __dict__(self):
+        return {'url': self.url, 'duration': self.duration, 'range': self.range, 'index': self.index}
 
 # TODO: progress property
 class M3U8Downloader():
