@@ -1,7 +1,10 @@
 import hashlib
 import json
+import time
 import os
 import re
+
+from downloader import Download
 
 class PartInfo():
     def __init__(self, downloaded: bool = False, url: str = None, duration: float = None, range: str = None, index: str = None):
@@ -64,7 +67,12 @@ class M3U8Downloader():
         self.output_file = os.path.abspath(output_file)
         self.file_extension = os.path.basename(output_file).rsplit('.')[-1]
         self.download_dir = './temp_m3u8_downloader/'
-        if headers is None: self.headers = {}
+        self.headers = headers
+        if headers is None: 
+            self.headers = {}
+            
+        self.max_retries = max_retries
+        self.max_downloads = max_downloads
 
         # creates a temporary directory based on the path of the output file
         if temp_dir == '':
@@ -73,6 +81,10 @@ class M3U8Downloader():
             self.temp_dir = f'{self.download_dir}{output_hash}/'
 
         os.makedirs(self.temp_dir, exist_ok=True)
+        
+        # creates directory for parts
+        self.parts_dir = f'{self.temp_dir}parts/'
+        os.makedirs(self.parts_dir, exist_ok=True)
 
         # assigns a name to be displayed along with download progress
         if label == '':
@@ -80,7 +92,7 @@ class M3U8Downloader():
         
         # get info from the m3u8, if this file has already been read before, reuse the previous version
         # to keep track of what has already been downloaded
-        self.parts_json_path = f'{self.temp_dir}/parts.json'
+        self.parts_json_path = f'{self.temp_dir}parts.json'
         if os.path.exists(self.parts_json_path):
             self.parts = PartInfo.load_json(self.parts_json_path)
         
@@ -91,8 +103,19 @@ class M3U8Downloader():
         # attributes used for tracking progress   
         self.total_parts = len(self.parts) - 1
         self.curr_part = 0
-    
 
+    
+    @property
+    def progress(self):
+        return (self.curr_part / self.total_parts) * 100
+    
+    # TODO: create method to update links
+    # sometimes the m3u8 file for the same video can contain different parameters on the urls of its parts
+    # depending on when it was generated, to allow downloads to continue even after a new m3u8 is
+    # genereated for the same video file, it's necessary to update the links on the json file
+    # without changing the other information.
+    # probably just need to rerun _extract_info() and update the links one by one using a for enumerate loop
+    # between the old and new json
     def _extract_info(self) -> list[PartInfo]:
         with open(self.m3u8_path) as playlist:
             lines = playlist.readlines()
@@ -138,4 +161,52 @@ class M3U8Downloader():
 
         return parts_info
 
+    # TODO: deal with unsatisfiable ranges
+    # TODO: make it threaded
+    # TODO: remove dependency on downloader.py
+    def download(self):
+        active_downloads = []
+        for part in self.parts:
+            print(self.progress)
+            self.curr_part += 1
+            if part.downloaded:
+                continue
 
+            # start download and append to list of downloads
+            try:
+                headers = self.headers.copy()
+                if part.range is not None:
+                    headers.update({'Range': part.range})
+
+                part_path = f'{self.parts_dir}{part.index}.{self.file_extension}'
+                download_obj = Download(part.url, part_path, headers=headers, max_retries=self.max_retries, try_continue=False)
+                download_obj.start()
+                active_downloads.append({'part': part, 'download': download_obj})
+
+            except ValueError:
+                continue
+            
+            # wait if the limit of simultaneous downloads has been reached or all the file has been read
+            while ((len(active_downloads) >= self.max_downloads) 
+            or (self.total_parts - self.curr_part <= self.max_downloads)):
+                # check for download progress
+                finished_indexes = []
+                for i, download_dict in enumerate(active_downloads):
+                    if not download_dict['download'].is_running:
+                        # update list of finished downloads
+                        download_dict['part'].downloaded = True
+                        PartInfo.save_json(self.parts, self.parts_json_path)
+
+                        # set it to be deleted from active downloads
+                        finished_indexes.append(i)
+                    
+                # update list of active downloads
+                offset = 0
+                for index in finished_indexes:
+                    active_downloads.pop(index-offset)
+                    offset += 1
+                
+                if len(active_downloads) == 0:
+                    break
+                
+                time.sleep(0.01)
