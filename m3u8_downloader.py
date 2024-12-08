@@ -1,8 +1,11 @@
 import hashlib
+import shutil
 import json
 import time
 import os
 import re
+
+import ffmpeg
 
 from downloader import Download
 
@@ -49,7 +52,6 @@ class PartInfo():
             return json.loads(json_file.read(), object_hook=new_object_hook)
     
     
-# TODO: progress property
 class M3U8Downloader():
     def __init__(
             self, 
@@ -85,6 +87,9 @@ class M3U8Downloader():
         # creates directory for parts
         self.parts_dir = f'{self.temp_dir}parts/'
         os.makedirs(self.parts_dir, exist_ok=True)
+
+        # path to the local m3u8 file
+        self.local_m3u8_path = f'{self.temp_dir}local.m3u8'
 
         # assigns a name to be displayed along with download progress
         if label == '':
@@ -164,7 +169,7 @@ class M3U8Downloader():
     # TODO: deal with unsatisfiable ranges
     # TODO: make it threaded
     # TODO: remove dependency on downloader.py
-    def download(self):
+    def _download_parts(self):
         active_downloads = []
         for part in self.parts:
             print(self.progress)
@@ -210,3 +215,35 @@ class M3U8Downloader():
                     break
                 
                 time.sleep(0.01)
+    
+
+    def _create_local_m3u8(self):
+        with open(self.local_m3u8_path, 'w', encoding='utf8') as local_m3u8:
+            local_m3u8.write('#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:1\n')
+
+            for part in self.parts:
+                part_path = os.path.abspath(f'{self.parts_dir}{part.index}.{self.file_extension}')
+                local_m3u8.write(f'#EXTINF:{part.duration},\n')
+                local_m3u8.write(f'{part_path}\n')
+            
+            local_m3u8.write('#EXT-X-ENDLIST')
+    
+
+    def _concat(self):
+        ffmpeg.input(self.local_m3u8_path).output(self.output_file, c='copy', y=None).run()
+    
+
+    def download(self):
+        # download parts and generate output file
+        self._download_parts()
+        self._create_local_m3u8()
+        self._concat()
+
+        # delete the temp_dir
+        shutil.rmtree(self.temp_dir)
+
+        # attempts to delete the temp_download_dir
+        try:
+            os.rmdir(self.download_dir)
+        except OSError:
+            pass
