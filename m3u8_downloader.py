@@ -170,51 +170,55 @@ class M3U8Downloader():
     # TODO: make it threaded
     # TODO: remove dependency on downloader.py
     def _download_parts(self):
-        active_downloads = []
-        for part in self.parts:
-            print(self.progress)
-            self.curr_part += 1
-            if part.downloaded:
-                continue
+        try:
+            active_downloads = []
+            for part in self.parts:
+                print(self.progress)
+                self.curr_part += 1
+                if part.downloaded:
+                    continue
 
-            # start download and append to list of downloads
-            try:
-                headers = self.headers.copy()
-                if part.range is not None:
-                    headers.update({'Range': part.range})
+                # start download and append to list of downloads
+                try:
+                    headers = self.headers.copy()
+                    if part.range is not None:
+                        headers.update({'Range': part.range})
 
-                part_path = f'{self.parts_dir}{part.index}.{self.file_extension}'
-                download_obj = Download(part.url, part_path, headers=headers, max_retries=self.max_retries, try_continue=False)
-                download_obj.start()
-                active_downloads.append({'part': part, 'download': download_obj})
+                    part_path = f'{self.parts_dir}{part.index}.{self.file_extension}'
+                    download_obj = Download(part.url, part_path, headers=headers, max_retries=self.max_retries, try_continue=False)
+                    download_obj.start()
+                    active_downloads.append({'part': part, 'download': download_obj})
 
-            except ValueError:
-                continue
-            
-            # wait if the limit of simultaneous downloads has been reached or all the file has been read
-            while ((len(active_downloads) >= self.max_downloads) 
-            or (self.total_parts - self.curr_part <= self.max_downloads)):
-                # check for download progress
-                finished_indexes = []
-                for i, download_dict in enumerate(active_downloads):
-                    if not download_dict['download'].is_running:
-                        # update list of finished downloads
-                        download_dict['part'].downloaded = True
-                        PartInfo.save_json(self.parts, self.parts_json_path)
+                except ValueError:
+                    continue
+                
+                # wait if the limit of simultaneous downloads has been reached or all the file has been read
+                while ((len(active_downloads) >= self.max_downloads) 
+                or (self.total_parts - self.curr_part <= self.max_downloads)):
+                    # check for download progress
+                    finished_indexes = []
+                    for i, download_dict in enumerate(active_downloads):
+                        if not download_dict['download'].is_running:
+                            # update list of finished downloads
+                            download_dict['part'].downloaded = True
+                            PartInfo.save_json(self.parts, self.parts_json_path)
 
-                        # set it to be deleted from active downloads
-                        finished_indexes.append(i)
+                            # set it to be deleted from active downloads
+                            finished_indexes.append(i)
+                        
+                    # update list of active downloads
+                    offset = 0
+                    for index in finished_indexes:
+                        active_downloads.pop(index-offset)
+                        offset += 1
                     
-                # update list of active downloads
-                offset = 0
-                for index in finished_indexes:
-                    active_downloads.pop(index-offset)
-                    offset += 1
-                
-                if len(active_downloads) == 0:
-                    break
-                
-                time.sleep(0.01)
+                    if len(active_downloads) == 0:
+                        break
+                    
+                    time.sleep(0.01)
+        
+        finally:
+            PartInfo.save_json(self.parts, self.parts_json_path)
     
 
     def _create_local_m3u8(self):
