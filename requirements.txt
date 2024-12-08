@@ -1,2 +1,2 @@
 requests
-ffmpeg
+ffmpeg-python
