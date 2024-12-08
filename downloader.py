@@ -5,92 +5,40 @@ import os
 
 import requests
 
-#TODO: add option to use original file name
-#TODO FIXME: some requests with no Range support are appending to the pre-existing file instead of clearing it
-#TODO: add method to wait for a single object
-class Download():
-    """A class to manage the download of files, supporting resumable downloads and progress tracking.
 
-    Attributes:
-    -----------
-    download_list : list
-        A class-level list that tracks all active download instances.
-    
-    url : str
-        The URL of the file to be downloaded.
-    
-    output_file : str
-        The file path where the downloaded content will be saved.
-    
-    is_running : bool
-        Indicates if the download is currently running.
-    
-    _interrupt_download : bool
-        A private attribute used to interrupt the download thread.
-    
-    total_size : int
-        The total size of the file to be downloaded in bytes.
-    
-    written_bytes : int
-        The number of bytes already written to the output file.
-    
-    response : requests.Response
-        The HTTP response object for the file download.
-    """
-        
-    download_list = []
-    _progress_lines_printed = 0
-
-    def __init__(self, url: str, output_file: str, headers: dict | None = None, max_retries: int = 0, base_retry_delay: float = 0.5, try_continue=True):
-        """Initializes a Download instance.
-
-        Parameters:
-        -----------
-        url : str
-            The URL of the file to be downloaded.
-        
-        output_file : str
-            The file path where the downloaded content will be saved.
-        
-        Raises:
-        -------
-        TypeError:
-            If the `url` attribute is not of type `str`.
-        
-        ValueError:
-            If another Download object is already using the specified `output_file`.
-        
-        requests.RequestException:
-            If the initial request to get the file size returns an unexpected status code.
-        
-        requests.RequestException:
-            If the request to get the file returns an unexpected status code.
-        
-        Side Effects:
-        -------------
-        Appends the created Download object to the class-level download_list.
-        """
-        
+class Download():  
+    def __init__(
+            self, 
+            url: str, 
+            output_file: str,
+            headers: dict | None = None, 
+            max_retries: int = 0, 
+            base_retry_delay: float = 0.5, 
+            try_continue=True,
+            except_status_codes: list[int] = None
+            ):
         if not isinstance(url, str):
             message = f"Invalid type for 'url' attribute."
             raise TypeError(message)
-
-        for download in Download.download_list:
-            if download.output_file == output_file:
-                message = f"Invalid value for 'output_file' attribute. There's already a Download object using the file at '{output_file}'"
-                raise ValueError(message)
         
         self.url = url
         self.output_file = output_file
         self.is_running = False
         self._interrupt_download = False
+        self.base_retry_delay = base_retry_delay
+        self.max_retries = max_retries
+
         self.try_continue = try_continue
+        if except_status_codes is None:
+            self.except_status_codes = [404, 403, 400, 405, 408, 410, 411, 412, 415, 429, 500, 501, 502, 503, 504]
+
+        else:
+            self.except_status_codes = except_status_codes
 
         if headers is None:
-            headers = {}
-        
+            self.headers = {}
         else:
-            headers = headers.copy()
+            self.headers = headers.copy()
 
         if self.try_continue:
             # get ammount of bytes already written before beggining
@@ -107,26 +55,62 @@ class Download():
             self.total_size = 0
             self.written_bytes = 0
 
-        # make a request
-        for attempt in range(max_retries + 1):
+
+    @property
+    def progress(self):
+        """Calculate the download progress as a percentage.
+
+        Returns:
+        --------
+        float
+            The progress of the download as a percentage (0 to 100).
+        """
+
+        if self.total_size:
+            return (self.written_bytes / self.total_size) * 100
+
+        else:
+            return 0
+        
+        
+    def _request_file(self):
+        # make request and retry the defined ammount of times
+        failed_request = False
+        for attempt in range(self.max_retries + 1):
             try:
-                self.response = requests.get(url, headers=headers, stream=True)
-                if self.response.status_code not in (200, 206):
+                self.response = requests.get(self.url, headers=self.headers, stream=True)
+
+                # if the request returned a status code that suggests it's worthless to retry, raise exception
+                if self.response.status_code in self.except_status_codes:
+                    failed_request = True
+                    message = f"Unexpected status code when requesting file size: {self.response.status_code}."
+                    raise requests.RequestException(message)
+
+                # if the request failed, but returned a status code that allow retrying, wait some time and then retry
+                elif self.response.status_code not in range(200, 300):
                     message = f"Unexpected status code when requesting file: {self.response.status_code}. Retrying..."
                     warnings.warn(message, RuntimeWarning)
 
                     # exponentially increase wait time before retrying
-                    wait_time = base_retry_delay * (2 ** attempt)
+                    wait_time = self.base_retry_delay * (2 ** attempt)
                     time.sleep(wait_time)
 
+                # if the request was succesful, stop retrying
                 else:
                     break
-
-            except requests.exceptions.RequestException as e:
+            
+            # implements the retry logic even with exceptions raised by the requests module
+            # this allows the program to continue if the connection times out, for example
+            except requests.RequestException as e:
+                # if the exception raised was generated by the retry logic, reraise it
+                if failed_request:
+                    raise e
+                
                 message = f"Exception raised when requesting file: {e}. Retrying..."
                 warnings.warn(message, RuntimeWarning)
+
                 # exponentially increase wait time before retrying
-                wait_time = base_retry_delay * (2 ** attempt)
+                wait_time = self.base_retry_delay * (2 ** attempt)
                 time.sleep(wait_time)
 
         if self.try_continue:
@@ -139,125 +123,8 @@ class Download():
                 warnings.warn(message, UserWarning)
                 self.total_size = 0
 
-        Download.download_list.append(self)
 
-    @property
-    def progress(self):
-        """Calculate the download progress as a percentage.
-
-        Returns:
-        --------
-        float
-            The progress of the download as a percentage (0 to 100).
-        """
-        if self.total_size:
-            return (self.written_bytes / self.total_size) * 100
-
-        else:
-            return 0
-
-    @classmethod
-    def get_running_count(cls):
-        running_downloads = 0
-        for download in cls.download_list:
-            if download.is_running:
-                running_downloads += 1
-        
-        return running_downloads
-
-    @classmethod
-    def show_all_progress(cls, update=False):
-        """Shows the progress of every download in the terminal.
-
-        Side Effects:
-        -------------
-        Updates the terminal output with the download progress.
-        """
-
-        # updates the previous output if the method has been called recently
-        if update:
-            print("\033[A\033[K"* cls._progress_lines_printed, end='\r')
-
-        # reset the attributes related to the method
-        cls._progress_lines_printed = 0
-
-        # print one download per line
-        for download in cls.download_list:
-            file_name: str = download.output_file
-            if '/' in file_name:
-                file_name = file_name.rsplit('/', 1)[1]
-
-            if download.progress:
-                print(f"{file_name}: {download.progress:.2f}%     ")
-
-            else:
-                print(f"{file_name}: {(download.written_bytes/1000000):.2f}mb/?mb")
-
-            cls._progress_lines_printed += 1
-    
-    @classmethod
-    def wait_downloads(cls, show_progress: bool = True, timeout: float = None):
-        """Waits for all downloads to complete. Optionally shows progress in the terminal.
-
-        Parameters:
-        -----------
-        show_progress : bool, optional
-            If True, prints the progress of each download (default is True).
-        
-        Side Effects:
-        -------------
-        Updates the terminal output with the download progress.
-        """
-
-        timer_start = time.perf_counter()
-        while True:
-            wait = False
-            for download in cls.download_list:
-                if download.progress >= 100:
-                    continue
-
-                elif download.is_running:
-                    wait = True
-
-            if show_progress:
-                cls.show_all_progress(True)
-
-            elapsed_time = time.perf_counter() - timer_start
-            if timeout is not None and elapsed_time > timeout:
-                break
-
-            if not wait:
-                break
-            
-            time.sleep(0.2)
-    
-    @classmethod
-    def stop_all(cls):
-        """Stops all currently running downloads.
-
-        Side Effects:
-        -------------
-        Interrupts and stops all active download threads.
-        """
-
-        for download in cls.download_list:
-            if download.is_running:
-                download.stop()
-    
-    def start(self):
-        """Starts the download process in a separate thread.
-        
-        Warns:
-        ------
-        RuntimeWarning:
-            If the download is already completed or currently running.
-        
-        Side Effects:
-        -------------
-        Spawns a new thread to handle the download process.
-        """
-
-        def download():
+    def _download(self):
             self.is_running = True
             # clear file if it doesn't support resuming
             if self.try_continue:
@@ -284,26 +151,42 @@ class Download():
                     
             self.is_running = False
             self._interrupt_download = False
-            Download.download_list.pop(Download.download_list.index(self))
-        
-        if self.response.status_code not in (200, 206):
-            message = f"Unexpected status code when requesting file size: {self.response.status_code}."
-            raise requests.RequestException(message)
 
+    
+    def start(self, wait: bool = False):
+        """Starts the download process in a separate thread.
+        
+        Warns:
+        ------
+        RuntimeWarning:
+            If the download is already completed or currently running.
+        
+        Side Effects:
+        -------------
+        Spawns a new thread to handle the download process.
+        """
+
+        # request file
+        self._request_file()
+        
+        # check for common mistakes
         if self.progress >= 100:
-            Download.download_list.pop(Download.download_list.index(self))
             message = "Can't start a download that's already finished."
             warnings.warn(message, RuntimeWarning)
             return
         
         if self.is_running:
-            Download.download_list.pop(Download.download_list.index(self))
             message = "Can't start a download that's already running."
             warnings.warn(message, RuntimeWarning)
             return
         
-        threading.Thread(target=download, daemon=True).start()
+        # start downloading
+        download_thread = threading.Thread(target=self._download, daemon=True)
+        download_thread.start()
+        if wait:
+            download_thread.join()
     
+
     def stop(self):
         """Stops the current download if it is running.
 
@@ -325,8 +208,8 @@ class Download():
         # set flag to interrupt the download thread and wait for it to properly stop
         self._interrupt_download = True
         while self.is_running:
-            time.sleep(0.0001)
-        
+            time.sleep(0.001)
+
 
 if __name__ == "__main__":
     import sys
