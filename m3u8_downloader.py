@@ -261,3 +261,38 @@ class M3U8Downloader():
             os.rmdir(self.download_dir)
         except OSError:
             pass
+
+# example usage
+if __name__ == "__main__":
+    # simple function to turn a headers string into a dictionary
+    def str2dict(string: str):
+        dictionary = {}
+        lines = string.split('\n')
+        for line in lines:
+            try:
+                key, val = line.split(':', 1)
+                dictionary.update({key.strip(): val.strip()})
+            except ValueError:
+                continue
+        
+        return dictionary
+    
+    # get input m3u8, output video file and headers
+    import sys
+    if len(sys.argv) >= 3:
+        input_m3u8 = sys.argv[1]
+        output_mp4 = sys.argv[2]
+        if len(sys.argv) >= 4:
+            headers = str2dict(sys.argv[3])
+        else:
+            headers = {}
+    
+    else:
+        exit('Example usage: python m3u8_downloader.py <m3u8 path> <output path> <request headers>')
+
+    # simplify warnning messages
+    warnings.formatwarning = lambda message, category, filename, lineno, file=None, line=None: f'{message}\n'
+
+    # start download
+    m3u8 = M3U8Downloader(input_m3u8, output_mp4, headers=headers, ignore_exeptions=True)
+    m3u8.download()
