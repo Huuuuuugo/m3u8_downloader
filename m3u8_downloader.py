@@ -83,6 +83,8 @@ class M3U8Downloader():
             output_hash = hashlib.sha256(self.output_file.encode())
             output_hash = output_hash.hexdigest()
             self.temp_dir = f'{self.download_dir}{output_hash}/'
+        else:
+            self.temp_dir = temp_dir
 
         os.makedirs(self.temp_dir, exist_ok=True)
         
@@ -96,6 +98,8 @@ class M3U8Downloader():
         # assigns a name to be displayed along with download progress
         if label == '':
             self.label = os.path.basename(output_file)
+        else:
+            self.label = label
         
         # get info from the m3u8, if this file has already been read before, reuse the previous version
         # to keep track of what has already been downloaded
@@ -111,7 +115,6 @@ class M3U8Downloader():
         self.total_parts = len(self.parts) - 1
         self.curr_part = 0
 
-    
     @property
     def progress(self):
         return (self.curr_part / self.total_parts) * 100
@@ -175,7 +178,7 @@ class M3U8Downloader():
         try:
             active_downloads = []
             for part in self.parts:
-                print(self.progress)
+                print(f"{self.label} {self.progress:.2f}%", end='\r')
                 self.curr_part += 1
                 if part.downloaded:
                     continue
@@ -225,7 +228,7 @@ class M3U8Downloader():
         
         finally:
             PartInfo.save_json(self.parts, self.parts_json_path)
-    
+            print()
 
     def _create_local_m3u8(self):
         with open(self.local_m3u8_path, 'w', encoding='utf8') as local_m3u8:
@@ -237,7 +240,6 @@ class M3U8Downloader():
                 local_m3u8.write(f'{part_path}\n')
             
             local_m3u8.write('#EXT-X-ENDLIST')
-    
 
     def _concat(self):
         subprocess.run(["ffmpeg", "-y",
@@ -245,7 +247,6 @@ class M3U8Downloader():
                     "-c", "copy",
                     f"{self.output_file}"
                     ])
-    
 
     def download(self):
         # download parts and generate output file
@@ -261,6 +262,7 @@ class M3U8Downloader():
             os.rmdir(self.download_dir)
         except OSError:
             pass
+
 
 # example usage
 if __name__ == "__main__":
