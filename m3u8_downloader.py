@@ -1,11 +1,11 @@
+import subprocess
+import warnings
 import hashlib
 import shutil
 import json
 import time
 import os
 import re
-
-import ffmpeg
 
 from downloader import Download
 
@@ -61,7 +61,8 @@ class M3U8Downloader():
             label: str = '',
             temp_dir: str = '', 
             max_downloads: int = 5, 
-            max_retries: int = 5
+            max_retries: int = 5,
+            ignore_exeptions: bool = False
         ):
 
         # general attributes
@@ -75,6 +76,7 @@ class M3U8Downloader():
             
         self.max_retries = max_retries
         self.max_downloads = max_downloads
+        self.ignore_exeptions = ignore_exeptions
 
         # creates a temporary directory based on the path of the output file
         if temp_dir == '':
@@ -189,8 +191,12 @@ class M3U8Downloader():
                     download_obj.start()
                     active_downloads.append({'part': part, 'download': download_obj})
 
-                except ValueError:
-                    continue
+                except Exception as e:
+                    if self.ignore_exeptions:
+                        warnings.warn(f"Exception raised when downloading part number '{part.index}': {type(e).__name__}: {e}")
+                        continue
+                    else:
+                        raise e
                 
                 # wait if the limit of simultaneous downloads has been reached or all the file has been read
                 while ((len(active_downloads) >= self.max_downloads) 
@@ -234,7 +240,11 @@ class M3U8Downloader():
     
 
     def _concat(self):
-        ffmpeg.input(self.local_m3u8_path).output(self.output_file, c='copy', y=None).run()
+        subprocess.run(["ffmpeg", "-y",
+                    "-i", self.local_m3u8_path, 
+                    "-c", "copy",
+                    f"{self.output_file}"
+                    ])
     
 
     def download(self):
