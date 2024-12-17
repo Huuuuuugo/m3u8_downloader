@@ -7,7 +7,10 @@ import time
 import os
 import re
 
-from downloader import Download
+try:
+    from m3u8_downloader.downloader import Download
+except ModuleNotFoundError:
+    from downloader import Download
 
 class PartInfo():
     def __init__(self, downloaded: bool = False, url: str = None, duration: float = None, range: str = None, index: str = None):
