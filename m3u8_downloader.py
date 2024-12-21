@@ -1,4 +1,5 @@
 import subprocess
+import threading
 import warnings
 import hashlib
 import shutil
@@ -115,7 +116,7 @@ class M3U8Downloader():
             PartInfo.save_json(self.parts, self.parts_json_path)
             
         # attributes used for tracking progress   
-        self.total_parts = len(self.parts) - 1
+        self.total_parts = len(self.parts)
         self.curr_part = 0
 
     @property
@@ -180,10 +181,11 @@ class M3U8Downloader():
     def _download_parts(self):
         try:
             active_downloads = []
+            print(f"{self.label} {self.progress:.2f}%", end='\r')
             for part in self.parts:
-                print(f"{self.label} {self.progress:.2f}%", end='\r')
-                self.curr_part += 1
                 if part.downloaded:
+                    self.curr_part += 1
+                    print(f"{self.label} {self.progress:.2f}%", end='\r')
                     continue
 
                 # start download and append to list of downloads
@@ -206,7 +208,7 @@ class M3U8Downloader():
                 
                 # wait if the limit of simultaneous downloads has been reached or all the file has been read
                 while ((len(active_downloads) >= self.max_downloads) 
-                or (self.total_parts - self.curr_part <= self.max_downloads)):
+                or (self.total_parts - self.curr_part <= self.max_downloads) and len(active_downloads) > 0):
                     # check for download progress
                     finished_indexes = []
                     for i, download_dict in enumerate(active_downloads):
@@ -224,10 +226,10 @@ class M3U8Downloader():
                         active_downloads.pop(index-offset)
                         offset += 1
                     
-                    if len(active_downloads) == 0:
-                        break
-                    
                     time.sleep(0.01)
+                
+                self.curr_part += 1
+                print(f"{self.label} {self.progress:.2f}%", end='\r')
         
         finally:
             PartInfo.save_json(self.parts, self.parts_json_path)
